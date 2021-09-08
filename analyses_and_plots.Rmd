@@ -1,0 +1,1114 @@
+---
+title: "Symbiont diversity - Analyses and plotting"
+author: "Anna Mankowski"
+output: html_document
+---
+
+# Load libraries
+
+```{r Load libraries, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+library("phyloseq")
+library("ape")
+library("rareNMtests")
+library("ggplot2")
+library("ggpmisc")
+library("vegan")
+library("gridExtra")
+library("plyr")
+library("MASS")
+library("gdata")
+library("dplyr")
+library("reshape2")
+library("forcats")
+library("patchwork")
+library("phytools")
+library("igraph")
+library("Hmisc")
+library("optparse")
+library("reshape2")
+library("stringr")
+library("ggpubr")
+library("maps")
+library("mapdata")
+library("data.table")
+library("ade4")
+library("tidyverse")
+library("spaa")
+library("geodist")
+```
+
+# Load and format data
+
+```{r Load and format data, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+### Abundance data
+# Per host individual
+
+data.matrix<-read.csv("./data/abundance-matrix.tsv", header=T, row.names=1, sep="\t")
+data.table<-read.csv("./data/abundances.tsv", sep="\t", header=T)
+data.table.gb<-read.csv("./data/abundances.GB.tsv", sep="\t", header=T)
+
+# Averaged per host species
+
+data.matrix.averaged<-read.csv("./data/abundance-matrix-averaged.tsv", sep="\t", header=T, row.names=1)
+
+### Metadata
+
+metadata<-read.csv("./data/metadata.csv", sep=";", header=T)
+metadata.maps<-read.csv("./data/metadata.maps.csv", sep=";", header=T)
+metadata.phyloseq<-read.csv("./data/metadata.csv", sep=";", header=T, row.names=1)
+
+### Age data
+
+age<-read.csv("./data/results.dating.csv", sep=";", header=T)
+
+### Host and symbiont phylogenies
+
+# Host
+
+host.tree.species<-read.tree("./data/host-tree.species.newick")
+host.tree.individuals<-read.tree("./data/host-tree.individuals.newick") 
+host.tree.treecmp<-read.tree("data/host-tree.individuals.for-TreeCmp.newick")
+
+# Mito
+
+mito.tree.species<-read.tree("./data/mito-tree.species.newick")
+mito.tree.individuals<-read.tree("./data/mito-tree.individuals.newick") 
+mito.tree.treecmp<-read.tree("data/mito-tree.individuals.for-TreeCmp.newick")
+
+#  Symbionts
+
+symbiont.tree.clades<-read.tree("./data/symbiont-tree.clades.newick")
+symbiont.tree.phyloseq<-drop.tip(symbiont.tree.clades,"clonepJP4116SribosomalRNAgenefragment" )
+
+### Vectors of host species and symbiont clade names in phylogenetic order for data organization
+
+hosts=c(host.tree.species$tip.label[63:64],host.tree.species$tip.label[62],host.tree.species$tip.label[60:61],host.tree.species$tip.label[57],host.tree.species$tip.label[58:59],host.tree.species$tip.label[3],host.tree.species$tip.label[1:2],host.tree.species$tip.label[22:23],host.tree.species$tip.label[21],host.tree.species$tip.label[20],host.tree.species$tip.label[19],host.tree.species$tip.label[4:5],host.tree.species$tip.label[18],host.tree.species$tip.label[17],host.tree.species$tip.label[16],host.tree.species$tip.label[14:15],host.tree.species$tip.label[6:13],host.tree.species$tip.label[27:28],host.tree.species$tip.label[24:26],host.tree.species$tip.label[35],host.tree.species$tip.label[34],host.tree.species$tip.label[32:33],host.tree.species$tip.label[31],host.tree.species$tip.label[29:30],host.tree.species$tip.label[55:56],host.tree.species$tip.label[51:54],host.tree.species$tip.label[50],host.tree.species$tip.label[48:49],host.tree.species$tip.label[40:41],host.tree.species$tip.label[39],host.tree.species$tip.label[38],host.tree.species$tip.label[36:37],host.tree.species$tip.label[47],host.tree.species$tip.label[46],host.tree.species$tip.label[45],host.tree.species$tip.label[44],host.tree.species$tip.label[42:43])
+
+symbionts<-c(symbiont.tree.clades$tip.label[32:33], symbiont.tree.clades$tip.label[31], symbiont.tree.clades$tip.label[30], symbiont.tree.clades$tip.label[26:27], symbiont.tree.clades$tip.label[24], symbiont.tree.clades$tip.label[25], symbiont.tree.clades$tip.label[23], symbiont.tree.clades$tip.label[22], symbiont.tree.clades$tip.label[28:29], symbiont.tree.clades$tip.label[20:21], symbiont.tree.clades$tip.label[17:19], symbiont.tree.clades$tip.label[16], symbiont.tree.clades$tip.label[15], symbiont.tree.clades$tip.label[13:14], symbiont.tree.clades$tip.label[7:12], symbiont.tree.clades$tip.label[2:6], symbiont.tree.clades$tip.label[1])
+
+### Merge and sort abundance data and metadata
+
+data.table.maps<-merge(data.table, metadata.maps, by="lib")
+
+data.table.metadata<-merge(data.table, metadata, by ="lib")
+data.table.metadata$host_species<-reorder.factor(data.table.metadata$host_species, new.order=hosts)
+data.table.metadata %>% arrange(host_species)
+data.table.metadata$symbiont<-as.character(data.table.metadata$symbiont)
+data.table.metadata$symbiont<-factor(data.table.metadata$symbiont, levels=symbionts)
+
+### Generate PhyloSeq objects
+# Using symbiont abundances of host individuals
+
+otu<-t(data.matrix)
+OTU<-otu_table(otu, taxa_are_rows=T)
+sampledata<-sample_data(metadata.phyloseq)
+physeq<-phyloseq(OTU, sampledata, symbiont.tree.phyloseq)
+
+# Using averaged symbiont abundances of host species
+
+otu.av<-t(data.matrix.averaged)
+OTU.av<-otu_table(otu.av, taxa_are_rows=T)
+physeq.av<-phyloseq(OTU.av, symbiont.tree.phyloseq)
+```
+
+
+```{r Set colors echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+symbiont.colors<-c("Alpha1"="#660000", "Alpha2"="#FF6633", "Alpha3"="#993300", "Alpha4"="#FF9999",
+          "Alpha5"="#CC3300", "Alpha6"="#FF9966", "Alpha7"="#CC0066", "Alpha8"="#FF0066", 
+          "Alpha9"="#FF0033", "Alpha10"="#FF6600", "Alpha12"="#993333", "Alpha13"="#FF9900", 
+          "Alpha14"="#FFCC99", "Alpha15"="#FF3333", "Alpha16"="#FF3300", "Delta1"="#6699FF", 
+          "Delta2"="#CCFFFF", "Delta3"="#00FFFF", "Delta4"="#00CCFF", "Delta5"="#006699", 
+          "Delta11"="#669999","Delta12"="#0099CC", "Delta13"="#000066", "Delta14"="#660099",
+          "Gamma1"="#339933", "Gamma2"="#00FF00", "Gamma3"="#336633", "Gamma4"="#99FF99", 
+          "Gamma5"="#009966",  "Gamma7"="#999900", "Spiro1"="#FF00FF", "Actinomarinales1"="#FFFF66",
+          "Marinimicrobia1"="#FFFF99")
+
+symbiont.colors.age<-c(symbiont.colors, "host"="gray")
+
+host.colors<-c("Iaduncosetis"="dodgerblue4", "IdutchaeA"="cadetblue3", "IdutchaeB"="cadetblue2",
+           "Iexumae"="dodgerblue2", "Ileukodermatus"="paleturquoise4", "Imakropetalos"="paleturquoise",
+           "Imanae"="deepskyblue3", "Imojicae"="paleturquoise3", "Ireginae"="cadetblue",
+           "Iscalprum"="dodgerblue3", "IspFANT"="deepskyblue2", "Ispguadeloupe1"="paleturquoise1",
+           "IspNYSP"="paleturquoise2", "IspULE"="dodgerblue", "Itriangulatus"="cadetblue4",
+           "Iwasseri"="royalblue4", "Oalbidus"="olivedrab", "Oalgarvensis"="olivedrab4",
+           "Onravisceralis"="mediumorchid", "Oclavatus"="seagreen1", 
+           "Ocrassitunicatus"="tomato1", "Ofaris"="hotpink3", "Ofilicauda"="tomato",
+           "Ofilithecatus"="darkseagreen2", "Ofinitimus"="orangered4", "Ofurinus"="firebrick1",
+           "Ogeniculatus"="aquamarine3", "Oilvae"="tomato2", "Oimperfectus"="violetred4",
+           "Onrloisae"="mediumorchid4", "OlongissimusB"="mediumpurple4", "Onivalis"="seagreen3",
+           "Onralgarvensis"="mediumpurple3", "Onrfaris"="hotpink1", "Onrtenuissimus"="firebrick2",
+           "Oprodigus"="aquamarine4", "Osp11"="firebrick4", "Osp66"="seagreen2",
+           "Ospbahamas1"="violetred", "Ospbelize1"="tomato3", "OspCAPE"="darkseagreen1",
+           "Ospdahab1"="royalblue3", "OspDARISL"="darkred", "OspFALSE"="darkseagreen4",
+           "OspFILI"="brown2", "OspHEAD"="brown4", "Ospheron1"="springgreen3", "Ospheron3"="seagreen",
+           "Ospheron4"="aquamarine", "Ospheron5"="seagreen4", "OspLEES"="violetred1",
+           "Ospnorthcarolina1"="violetred3", "Ospoahu1"="firebrick3", "Ospokinawa1"="darkseagreen3",
+           "Ospokinawa2"="olivedrab2", "OspOTHER"="lightpink", "Ospcanary1"="royalblue1",
+           "OspTT"="olivedrab3", "OspWHICH"="brown3", "Otantulus"="tomato4", "Otenuissimus"="firebrick",
+           "Oullae"="brown", "Ovacuus"="brown1", "Ozimmermannae"="violetred2")
+
+ocean.colors<-c("Atlantic"="indianred1",
+           "Mediterranean"="royalblue",
+           "RedSea"="lightgoldenrod1",
+           "Indian"="mediumpurple3",
+           "Pacific"="seagreen3")
+
+country.colors<-c("WesternAustralia"="mediumpurple3",
+             "Queensland"="springgreen",
+             "Bahamas"="indianred",
+             "Belize"="indianred1",
+             "Bermuda"="indianred3",
+             "Egypt"="lightgoldenrod",
+             "Italy"="royalblue",
+             "France"="royalblue4",
+             "Guadeloupe"="indianred4",
+             "Hawaii"="palegreen",
+             "Spain"="skyblue3",
+             "NewCaledonia"="palegreen4",
+             "NorthCarolina"="tomato3",
+             "Japan"="seagreen3",
+             "Peru"="palegreen3",
+             "SouthAfrica"="firebrick1",
+             "Canaries"="salmon1")
+
+organic.colors<-c("a_unknown"="gainsboro",
+           "unspecified"="gray",
+           "algal_crust"="darkseagreen1",
+           "algal_plumbs"="darkseagreen2",
+           "corals"="coral",
+           "corals_algae"="coral3",
+           "seagrass"="darkseagreen4",
+           "seagrass_algal_plumbs"="springgreen4",
+           "seagrass_corals"="seagreen4",
+           "seagrass_detritus"="seagreen3",
+           "detritus"="sienna4")
+
+sedtype.colors<-c("a_unknown"="gainsboro",
+           "sand"="lightgoldenrod",
+           "carbonate_sand"="lightsalmon3",
+           "coral_sand"="coral",
+           "silicate_sand"="ivory",
+           "mud_sand"="tan",
+           "mud"="tan3",
+           "silt"="sienna4")
+```
+
+# Analyze and plot
+
+```{r Compare congruence between host trees echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+shared.nodes.hosts<-matchNodes(host.tree.individuals, mito.tree.individuals, method="descendants")[,2]
+length(shared.nodes.hosts)
+shared.nodes.hosts<-sum(!is.na(shared.nodes.hosts))
+shared.nodes.hosts
+```
+
+```{r Rarefaction echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+data.rare.q0<-rarefaction.sample(data.matrix)
+data.rare.q1<-rarefaction.sample(data.matrix, q=1)
+data.rare.q2<-rarefaction.sample(data.matrix, q=2)
+data.rare<-merge(data.rare.q0, data.rare.q1, by="sample-size")
+data.rare<-merge(data.rare, data.rare.q2, by="sample-size")
+names(data.rare)<-c("samples", "q0", "q1", "q2")
+data.rare<-data.rare %>% select(samples, q0, q1, q2) %>% gather(key="variable", value="value", -samples)
+
+rare.plot<-ggplot(data.rare) + 
+  geom_point(aes(x=samples, y=value, colour=variable)) +
+  scale_color_manual(values=c("q2"="darkseagreen1", "q0"="springgreen4","q1"="seagreen3"), 
+                    labels=c("Clade number", "Shannon index", "Inverse Simpson index"),
+                    name="") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(size=12)) +
+  theme(axis.text.y=element_text(size=12)) +
+  theme(legend.position="top") +
+  labs(x="Number of host individuals", y="Symbiont clade richness") 
+rare.plot
+ggsave(rare.plot, file="./plots/rare.plot.eps", height=200, width=200, units="mm")
+```
+
+```{r Plot sampling locations, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+world<-map_data("world")
+
+map.sampling.locations<-ggplot() +
+  geom_polygon(data=world, aes(x=long, y=lat, group=group) , fill="grey")+
+    theme_bw() +
+  theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
+        panel.border=element_blank()) +
+  theme(axis.title=element_blank(), 
+        axis.text=element_blank(), 
+        axis.ticks=element_blank()) +
+  geom_point(data=data.table.maps, aes(x=longitude, y=latitude, colour=country), size=3) +
+  scale_colour_manual(values=country.colors, name="Country") +
+  theme(legend.position="none")
+map.sampling.locations
+ggsave(map.sampling.locations, file="./plots/map.sampling.locations.eps", width=200, height=100, units="mm", limitsize=F)
+```
+
+```{r Plot abundances , echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+abundance.plot<-ggplot(data.table.metadata, aes(fct_rev(symbiont), fct_rev(host_species))) +
+  geom_point(aes(size=abundance, fill=symbiont), colour="black", pch=21) +
+  scale_size_continuous(range=c(0,6),
+                        guide="legend",
+                        name="Relative abundance (%)") +
+  scale_fill_manual(values=symbiont.colors,
+                    breaks=c("Alpha1", "Alpha2", "Alpha3", "Alpha4", "Alpha5", "Alpha6", "Alpha7",
+                             "Alpha8", "Alpha9", "Alpha10", "Alpha12", "Alpha13", "Alpha14", "Alpha15",
+                             "Alpha16"," Delta1", "Delta2", "Delta3", "Delta4", "Delta5", "Delta8",
+                             "Delta11", "Delta12", "Delta13", "Delta14", "Gamma1", "Gamma2", "Gamma3",
+                             "Gamma4", "Gamma4a", "Gamma5", "Gamma6", "Gamma7", "Gamma8",
+                             "Spiro1", "Actinomarinales1", "Marinimicrobia1"),
+                    guide=FALSE) + 
+  theme_minimal() +
+  #theme(panel.grid.major=element_line(colour="#CCCCCC")) +
+  theme(legend.position="bottom") + 
+  scale_x_discrete(position="top") +
+  #theme(text=element_text(family="Arial")) + 
+  theme(axis.text.x=element_text(angle=-90, hjust=1, size=5),
+        axis.title.x=element_blank()) +
+  theme(axis.text.y=element_text(size=5),
+        axis.title.y=element_blank())
+
+gb.abundance.plot<-ggplot(data.table.gb, aes(symbiont, fct_rev(lib))) +
+  geom_point(aes(size=abundance, fill=symbiont), colour="black", pch=21) +
+  scale_size_continuous(range=c(0,6),
+                        guide="legend",
+                        name="Relative abundance (%)") +
+  scale_fill_manual(values=symbiont.colors,
+                    breaks=c("Alpha1", "Alpha2", "Alpha3", "Alpha4", "Alpha5", "Alpha6", "Alpha7",
+                             "Alpha8", "Alpha9", "Alpha10", "Alpha12", "Alpha13", "Alpha14", "Alpha15",
+                             "Alpha16"," Delta1", "Delta2", "Delta3", "Delta4", "Delta5", "Delta8",
+                             "Delta11", "Delta12", "Delta13", "Delta14", "Gamma1", "Gamma2", "Gamma3",
+                             "Gamma4", "Gamma4a", "Gamma5", "Gamma6", "Gamma7", "Gamma8",
+                             "Spiro1", "Actinomarinales1", "Marinimicrobia1"),
+                    guide=FALSE) + 
+  theme_minimal() +
+  theme(legend.position="bottom") + 
+  scale_x_discrete(position="top") +
+  theme(axis.text.x=element_text(angle=-90, hjust=1),
+        axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  theme(text=element_text(size=5))
+
+abundance.plot
+gb.abundance.plot
+
+ggsave(abundance.plot, file="./plots/abundance.plot.eps", width=200, height=200, units="mm", limitsize=F)
+ggsave(gb.abundance.plot, file="./plots/gb.abundance.plot.eps", width=180, height=60, units="mm")
+```
+
+```{r Generate UniFrac distances, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Create distance matrix with all samples
+set.seed(0)
+
+unifrac.dist<-ordinate(physeq=physeq, method="NMDS", distance="unifrac")
+
+NMDS1<-as.numeric(unifrac.dist$points[,1])
+NMDS2<-as.numeric(unifrac.dist$points[,2])
+
+NMDS1<-as.data.frame(x=NMDS1, row.names=rownames(data.matrix))
+NMDS2<-as.data.frame(x=NMDS2, row.names=rownames(data.matrix))
+
+df.unifrac<-merge(NMDS1, NMDS2, by=0, all=T)
+rownames(df.unifrac)<-df.unifrac$Row.names
+df.unifrac[,1]<-NULL
+
+df.unifrac<-merge(df.unifrac, metadata, by.x=0, by.y="lib", all=T)
+rownames(df.unifrac)<-df.unifrac$Row.names
+df.unifrac[,1]<-NULL
+df.unifrac$lib<-row.names(df.unifrac)
+df.unifrac<-df.unifrac[ which(df.unifrac$NMDS1 != "NA"), ]
+```
+
+```{r UniFrac PERMANOVA stats + Mantel test for geographic distance, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+set.seed(0)
+
+### Prepare UniFrac dist object 
+
+unifrac<-UniFrac(physeq, F, T, F, T)
+unifrac.matrix<-as.matrix(unifrac)
+
+### PERMANOVA
+
+adonis.host_species<-adonis2(distance(physeq, method="unifrac") ~ host_species, data=metadata, permutations=999)
+adonis.ocean<-adonis2(distance(physeq, method="unifrac") ~ ocean, data=metadata, permutations=999)
+adonis.organic_input<-adonis2(distance(physeq, method="unifrac") ~ organic_input, data=metadata, permutations=999)
+adonis.sediment_type<-adonis2(distance(physeq, method="unifrac") ~ sediment_type, data=metadata, permutations=999)
+
+### Mantel test 
+
+# Generate geographic distance matrix
+
+geodist<-metadata[, c(1,15,16)]
+geodist<-geodist[ which(geodist$latitude != "a_unknown"),]
+geodist.matrix<-geodist::geodist(geodist)
+row.names(geodist.matrix)<-geodist$lib
+colnames(geodist.matrix)<-geodist$lib
+geo.dist<-as.dist(geodist.matrix, upper=T, diag=T)
+
+# Subset UniFrac distance matrix
+
+geo<-row.names(geodist.matrix)
+unifrac.forgeo<-unifrac.matrix[(row.names(unifrac.matrix) %in% geo),]
+unifrac.forgeo<-unifrac.forgeo[,(colnames(unifrac.forgeo) %in% geo)]
+unifrac.forgeo.dist<-as.dist(unifrac.forgeo, upper=T, diag=T)
+
+mantel.unifrac.geo<-mantel.rtest(unifrac.forgeo.dist, geo.dist, nrepet=999)
+
+adonis.host_species
+adonis.ocean
+adonis.organic_input
+adonis.sediment_type
+mantel.unifrac.geo
+```
+
+```{r UniFrac NMDS with different colorations for different parameters, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+### Base and blank plots
+
+unifrac.nmds.base<-ggplot(data=df.unifrac) +
+  theme_minimal() +  
+  theme(axis.text=element_text(size=12)) +
+  theme(axis.title=element_text(size=12)) +
+  theme(axis.text.x=element_text(size=12), 
+        axis.text=element_text(size=12)) +
+  labs(y="NMDS2", x="NMDS1") +
+  theme(legend.text=element_text(size=12)) 
+
+unifrac.nmds.blank<-ggplot(data=df.unifrac) + 
+  geom_point(aes(NMDS1, NMDS2), colour="white", alpha=0) + theme_minimal() +
+  theme(axis.title=element_text(color="white"), 
+        axis.text=element_text(color="white"), 
+        axis.ticks=element_blank(), 
+        panel.grid=element_blank()) 
+
+### Oceans
+
+oc<-c(levels(df.unifrac$ocean)[1], levels(df.unifrac$ocean)[3], levels(df.unifrac$ocean)[5], levels(df.unifrac$ocean)[2], levels(df.unifrac$ocean)[4])
+df.unifrac<-left_join(data.frame(ocean=oc), df.unifrac, by="ocean")
+
+unifrac.nmds.ocean<-unifrac.nmds.base +
+  geom_point(data=df.unifrac, aes(NMDS1, NMDS2, colour=ocean), size=10) +
+  scale_colour_manual(
+    values=ocean.colors,
+    breaks=oc) +
+  guides(colour=guide_legend("Ocean")) 
+
+### Organic input
+
+organic<-c(levels(df.unifrac$organic_input)[1], levels(df.unifrac$organic_input)[2:5], levels(df.unifrac$organic_input)[7:10], levels(df.unifrac$organic_input)[6])
+df.unifrac<-left_join(data.frame(organic_input=organic), df.unifrac, by="organic_input")
+
+unifrac.nmds.organic<-unifrac.nmds.base +
+  geom_point(data=df.unifrac, aes(NMDS1, NMDS2, colour=organic_input), size=10) +
+  scale_colour_manual(
+    values=organic.colors,
+    breaks=organic) +
+  guides(colour=guide_legend("Organic input")) 
+
+### Sediment type
+
+sed_type<-c(levels(df.unifrac$sediment_type)[1], levels(df.unifrac$sediment_type)[6], levels(df.unifrac$sediment_type)[2:3], levels(df.unifrac$sediment_type)[7], levels(df.unifrac$sediment_type)[5], levels(df.unifrac$sediment_type)[4], levels(df.unifrac$sediment_type)[8])
+df.unifrac<-left_join(data.frame(sediment_type=sed_type), df.unifrac, by="sediment_type")
+
+unifrac.nmds.sedimenttype<-unifrac.nmds.base +
+  geom_point(data=df.unifrac, aes(NMDS1, NMDS2, colour=sediment_type), size=10) +
+  scale_colour_manual(
+    values=sedtype.colors,
+    breaks=sed_type) +
+  guides(colour=guide_legend("Sediment type")) 
+
+### Combined plots
+
+unifrac.nmds.final<-(unifrac.nmds.ocean | unifrac.nmds.sedimenttype | unifrac.nmds.organic)
+
+unifrac.nmds.final
+
+ggsave(unifrac.nmds.final, file="./plots/unifrac.nmds.final.eps", width=600, height=200, units="mm", limitsize=F)
+```
+
+```{r Prepare congruence analyses between host species and species-level symbiont community composition, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+set.seed(0)
+
+### Generate dendrogramm reflecting dissimilarities of symbiont community composition
+
+unifrac.av<-UniFrac(physeq.av, F, T, F, T)
+unifrac.av.clust<-hclust(as.dist(unifrac.av))
+unifrac.av.dendro<-as.phylo(unifrac.av.clust)
+write.tree(phy=unifrac.av.dendro, file="./analyses/TreeCmp/mt.newick")
+
+### Generate random trees
+
+random.trees<-rmtree(100000, 64, rooted=T, tip.label=hosts)
+write.tree(phy=random.trees, file="./analyses/TreeCmp/random_trees/random_trees.newick")
+
+### Prune and save host trees in analyses directory
+
+remove.host<-setdiff(host.tree.treecmp$tip.label, hosts)
+host.tree.treecmp.final<-drop.tip(host.tree.treecmp, remove.host)
+write.tree(phy=host.tree.treecmp.final, file="./analyses/TreeCmp/host.newick")
+
+### Prune and save mito tree in analyses directory
+
+remove.host<-setdiff(host.tree.treecmp$tip.label, hosts)
+host.tree.treecmp.final<-drop.tip(host.tree.treecmp, remove.host)
+write.tree(phy=host.tree.treecmp.final, file="./analyses/TreeCmp/mito.newick")
+```
+
+```{bash Calculate congruence, echo=TRUE}
+# Needs to be executed directly on the command line, python scripts request direct input
+
+cd ./analyses/TreeCmp
+
+# Congruence of host phylogeny vs. symbiont community composition
+
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r host.newick -d rf -i mt.newick -o host.treecmp_rf.txt -P -N
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r host.newick -d rf -i random_trees/random_trees.newick -o host.treecmp_stochastic_rf.txt -P -N
+
+python ../../scripts/pandas_collate_robinson_foulds_rf.py -i ./host.treecmp_stochastic_rf.txt,./host.treecmp_rf.txt
+
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r host.newick -d mc -i mt.newick -o host.treecmp_mc.txt -P -N
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r host.newick -d mc -i random_trees/random_trees.newick -o host.treecmp_stochastic_mc.txt -P -N 
+
+python ../../scripts/pandas_collate_robinson_foulds_mc.py -i ./host.treecmp_stochastic_mc.txt,./host.treecmp_mc.txt 
+
+# Congruence of mito phylogeny vs. symbiont community composition
+
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r mito.newick -d rf -i mt.newick -o mito.treecmp_rf.txt -P -N
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r mito.newick -d rf -i random_trees/random_trees.newick -o mito.treecmp_stochastic_rf.txt -P -N
+
+python ../../scripts/pandas_collate_robinson_foulds_rf.py -i ./mito.treecmp_stochastic_rf.txt,./mito.treecmp_rf.txt 
+
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r mito.newick -d mc -i mt.newick -o mito.treecmp_mc.txt -P -N
+java -jar /Users/amankows/software/TreeCmp/bin/TreeCmp.jar -r mito.newick -d mc -i random_trees/random_trees.newick -o mito.treecmp_stochastic_mc.txt -P -N
+
+python ../../scripts/pandas_collate_robinson_foulds_mc.py -i ./mito.treecmp_stochastic_mc.txt,./mito.treecmp_mc.txt 
+```
+
+```{bash TreeCmp results, eval=FALSE}
+Host RF
+Summary: Stochatic Comparison
+  Number Columns: 7
+  Number Indices: 100000
+Summary: Host-Microbe Comparison
+  Number Columns: 7
+  Number Indices: 1
+
+Host-Microbe Score:   53.5
+
+Better Score:         0
+Worse Score:          100000
+Equiv Score:          0
+P-value better:       0.0
+
+Better\Equal Score:   0
+Worse Score:          100000
+P-value Better/Equal: 0.0
+
+Max Stochastic Metric:  60.5
+
+Host MC
+Summary: Stochatic Comparison
+  Number Columns: 7
+  Number Indices: 100000
+Summary: Host-Microbe Comparison
+  Number Columns: 7
+  Number Indices: 1
+
+Host-Microbe Score:   486.0
+
+Better Score:         1765
+Worse Score:          98087
+Equiv Score:          148
+P-value better:       0.01765
+
+Better\Equal Score:   1913
+Worse Score:          98087
+P-value Better/Equal: 0.01913
+
+Max Stochastic Metric:  630.0
+
+Mito RF
+Summary: Stochatic Comparison
+  Number Columns: 7
+  Number Indices: 100000
+Summary: Host-Microbe Comparison
+  Number Columns: 7
+  Number Indices: 1
+
+Host-Microbe Score:   53.5
+
+Better Score:         0
+Worse Score:          100000
+Equiv Score:          0
+P-value better:       0.0
+
+Better\Equal Score:   0
+Worse Score:          100000
+P-value Better/Equal: 0.0
+
+Max Stochastic Metric:  60.5
+
+Mito MC
+Summary: Stochatic Comparison
+  Number Columns: 7
+  Number Indices: 100000
+Summary: Host-Microbe Comparison
+  Number Columns: 7
+  Number Indices: 1
+
+Host-Microbe Score:   486.0
+
+Better Score:         1765
+Worse Score:          98087
+Equiv Score:          148
+P-value better:       0.01765
+
+Better\Equal Score:   1913
+Worse Score:          98087
+P-value Better/Equal: 0.01913
+
+Max Stochastic Metric:  630.0
+```
+
+```{r Calculate number of shared nodes between host phylogenies and permuted symbiont community compositions, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+shared.nodes.host<-matchNodes(host.tree.species, unifrac.av.dendro, method="descendants")[,2]
+shared.nodes.host<-sum(!is.na(shared.nodes.host))
+
+shared.nodes.host.perm<-vector()
+data.matrix.averaged.t<-t(data.matrix.averaged)
+for (i in 1:1000){
+  colnames(data.matrix.averaged.t)<-sample(colnames(data.matrix.averaged.t))
+  otu.perm<-data.matrix.averaged.t
+  OTU.perm<-otu_table(otu.perm, taxa_are_rows=T)
+  physeq.perm<-phyloseq(OTU.perm, symbiont.tree.phyloseq)
+  unifrac.perm<-UniFrac(physeq.perm, F, T, F, T)
+  unifrac.perm.clust<-hclust(as.dist(unifrac.perm))
+  unifrac.perm.dendro<-as.phylo(unifrac.perm.clust)
+  sample<-matchNodes(host.tree.species, unifrac.perm.dendro, method="descendants")[,2]
+  shared.nodes.host.perm<-c(shared.nodes.host.perm, sum(!is.na(sample)))
+}
+
+shared.nodes.host.fused<-c(shared.nodes.host.perm, shared.nodes.host)
+shared.nodes.host.fused<-as.data.frame(shared.nodes.host.fused-1)
+shared.nodes.host.df<-as.data.frame(shared.nodes.host.perm-1)
+colnames(shared.nodes.host.df)<-"x"
+shared.nodes.host=shared.nodes.host-1
+
+shared.nodes.host.ttest<-t.test(shared.nodes.host.df$x, mu=shared.nodes.host)
+
+shared.nodes.mito<-matchNodes(mito.tree.species, unifrac.av.dendro, method="descendants")[,2]
+shared.nodes.mito<-sum(!is.na(shared.nodes.mito))
+
+shared.nodes.mito.perm<-vector()
+data.matrix.averaged.t<-t(data.matrix.averaged)
+for (i in 1:1000){
+  colnames(data.matrix.averaged.t)<-sample(colnames(data.matrix.averaged.t))
+  otu.perm<-data.matrix.averaged.t
+  OTU.perm<-otu_table(otu.perm, taxa_are_rows=T)
+  physeq.perm<-phyloseq(OTU.perm, symbiont.tree.phyloseq)
+  unifrac.perm<-UniFrac(physeq.perm, F, T, F, T)
+  unifrac.perm.clust<-hclust(as.dist(unifrac.perm))
+  unifrac.perm.dendro<-as.phylo(unifrac.perm.clust)
+  sample<-matchNodes(mito.tree.species, unifrac.perm.dendro, method="descendants")[,2]
+  shared.nodes.mito.perm<-c(shared.nodes.mito.perm, sum(!is.na(sample)))
+}
+
+shared.nodes.mito.fused<-c(shared.nodes.mito.perm, shared.nodes.mito)
+shared.nodes.mito.fused<-as.data.frame(shared.nodes.mito.fused-1)
+shared.nodes.mito.df<-as.data.frame(shared.nodes.mito.perm-1)
+colnames(shared.nodes.mito.df)<-"x"
+shared.nodes.mito=shared.nodes.mito-1
+
+shared.nodes.mito.ttest<-t.test(shared.nodes.mito.df$x, mu=shared.nodes.mito)
+```
+
+```{r Test whether sister  species with similar communities are more closely related than other sister species, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+host.individuals.phylo.matrix<-cophenetic(host.tree.individuals)
+host.individuals.phylo.melted<-melt(host.individuals.phylo.matrix)
+
+tmp<-host.individuals.phylo.melted[grep("Oimperfectus", host.individuals.phylo.melted$Var1), ]
+H1<-tmp[grep("Ospnorthcarolina1", tmp$Var2), ]
+H1$Var1<-"H1"
+H1$Var2<-"H1"
+tmp<-host.individuals.phylo.melted[grep("Iscalprum", host.individuals.phylo.melted$Var1), ]
+H2<-tmp[grep("Iaduncosetis", tmp$Var2), ]
+H2$Var1<-"H2"
+H2$Var2<-"H2"
+tmp<-host.individuals.phylo.melted[grep("IdutchaeA", host.individuals.phylo.melted$Var1), ]
+H3<-tmp[grep("IdutchaeB", tmp$Var2), ]
+H3$Var1<-"H3"
+H3$Var2<-"H3"
+tmp<-host.individuals.phylo.melted[grep("Ogeniculatus", host.individuals.phylo.melted$Var1), ]
+H4<-tmp[grep("Ospheron4", tmp$Var2), ]
+H4$Var1<-"H4"
+H4$Var2<-"H4"
+tmp<-host.individuals.phylo.melted[grep("Ospheron5", host.individuals.phylo.melted$Var1), ]
+H5<-tmp[grep("Ospheron3", tmp$Var2), ]
+H5$Var1<-"H5"
+H5$Var2<-"H5"
+tmp<-host.individuals.phylo.melted[grep("Onivalis", host.individuals.phylo.melted$Var1), ]
+H6<-tmp[grep("Osp66", tmp$Var2), ]
+H6$Var1<-"H6"
+H6$Var2<-"H6"
+tmp<-host.individuals.phylo.melted[grep("OspLEES", host.individuals.phylo.melted$Var1), ]
+H7<-tmp[grep("Ospbahamas1", tmp$Var2), ]
+H7$Var1<-"H7"
+H7$Var2<-"H7"
+tmp<-host.individuals.phylo.melted[grep("Oullae", host.individuals.phylo.melted$Var1), ]
+H8<-tmp[grep("Ovacuus", tmp$Var2), ]
+H8$Var1<-"H8"
+H8$Var2<-"H8"
+
+tmp<-host.individuals.phylo.melted[grep("Oalgarvensis", host.individuals.phylo.melted$Var1), ]
+HR1<-tmp[grep("nralgarvensis", tmp$Var2), ]
+HR1$Var2<-"HR1"
+tmp<-host.individuals.phylo.melted[grep("Oilvae", host.individuals.phylo.melted$Var1), ]
+HR2<-tmp[grep("OspFALSE", tmp$Var2), ]
+HR2$Var2<-"HR2"
+tmp<-host.individuals.phylo.melted[grep("IspFANT", host.individuals.phylo.melted$Var1), ]
+HR3<-tmp[grep("Imanae", tmp$Var2), ]
+HR3$Var2<-"HR3"
+tmp<-host.individuals.phylo.melted[grep("Ileukodermatus", host.individuals.phylo.melted$Var1), ]
+HR4<-tmp[grep("Imojicae", tmp$Var2), ]
+HR4$Var2<-"HR4"
+tmp<-host.individuals.phylo.melted[grep("Iexumae", host.individuals.phylo.melted$Var1), ]
+HR5<-tmp[grep("IspULE", tmp$Var2), ]
+HR5$Var2<-"HR5"
+tmp<-host.individuals.phylo.melted[grep("Ireginae", host.individuals.phylo.melted$Var1), ]
+HR6<-tmp[grep("triangulatus", tmp$Var2), ]
+HR6$Var2<-"HR6"
+tmp<-host.individuals.phylo.melted[grep("Ospokinawa2", host.individuals.phylo.melted$Var1), ]
+HR7<-tmp[grep("OspTT", tmp$Var2), ]
+HR7$Var2<-"HR7"
+tmp<-host.individuals.phylo.melted[grep("Ocrassitunicatus", host.individuals.phylo.melted$Var1), ]
+HR8<-tmp[grep("Ofilicauda", tmp$Var2), ]
+HR8$Var2<-"HR8"
+tmp<-host.individuals.phylo.melted[grep("Otantulus", host.individuals.phylo.melted$Var1), ]
+HR9<-tmp[grep("Ospbelize1", tmp$Var2), ]
+HR9$Var2<-"HR9"
+tmp<-host.individuals.phylo.melted[grep("Ospokinawa1", host.individuals.phylo.melted$Var1), ]
+HR10<-tmp[grep("Ofilithecatus", tmp$Var2), ]
+HR10$Var2<-"HR10"
+tmp<-host.individuals.phylo.melted[grep("OspDARISL", host.individuals.phylo.melted$Var1), ]
+HR11<-tmp[grep("OspHEAD", tmp$Var2), ]
+HR11$Var2<-"HR11"
+tmp<-host.individuals.phylo.melted[grep("Ofinitimus", host.individuals.phylo.melted$Var1), ]
+HR12<-tmp[grep("Osp11", tmp$Var2), ]
+HR12$Var2<-"HR12"
+tmp<-host.individuals.phylo.melted[grep("Ofaris", host.individuals.phylo.melted$Var1), ]
+HR13<-tmp[grep("Onrfaris", tmp$Var2), ]
+HR13$Var2<-"HR13"
+tmp<-host.individuals.phylo.melted[grep("Onrloisae", host.individuals.phylo.melted$Var1), ]
+HR14<-tmp[grep("Onravisceralis", tmp$Var2), ]
+HR14$Var2<-"HR14"
+REF<-rbind(HR1, HR2, HR3, HR4, HR5, HR6, HR7, HR8, HR9, HR10, HR11, HR12, HR13, HR14)
+REF$Var1<-"REF"
+
+host.phylodist.pairs.final<-rbind(H1, H2, H3, H4, H5,  H6, H7, H8, REF)
+
+host.phylodist.pairs.final.ref<-host.phylodist.pairs.final[grep("REF", host.phylodist.pairs.final$Var1), ]$value
+host.phylodist.pairs.final.notref<-host.final[grep("REF", host.phylodist.pairs.final$Var1, invert=T), ]$value
+host.wilcoxon<-wilcox.test(host.phylodist.pairs.final.ref, host.phylodist.pairs.final.notref, paired=F)
+
+mito.individuals.phylo.matrix<-cophenetic(mito.tree.individuals)
+mito.individuals.phylo.melted<-melt(mito.individuals.phylo.matrix)
+
+tmp<-mito.individuals.phylo.melted[grep("Oimperfectus", mito.individuals.phylo.melted$Var1), ]
+M1<-tmp[grep("Ospnorthcarolina1", tmp$Var2), ]
+M1$Var1<-"M1"
+M1$Var2<-"M1"
+tmp<-mito.individuals.phylo.melted[grep("Iscalprum", mito.individuals.phylo.melted$Var1), ]
+M2<-tmp[grep("Iaduncosetis", tmp$Var2), ]
+M2$Var1<-"M2"
+M2$Var2<-"M2"
+tmp<-mito.individuals.phylo.melted[grep("IdutchaeA", mito.individuals.phylo.melted$Var1), ]
+M3<-tmp[grep("IdutchaeB", tmp$Var2), ]
+M3$Var1<-"M3"
+M3$Var2<-"M3"
+tmp<-mito.individuals.phylo.melted[grep("Ogeniculatus", mito.individuals.phylo.melted$Var1), ]
+M4<-tmp[grep("Ospheron4", tmp$Var2), ]
+M4$Var1<-"M4"
+M4$Var2<-"M4"
+tmp<-mito.individuals.phylo.melted[grep("Ofinitimus", mito.individuals.phylo.melted$Var1), ]
+M5<-tmp[grep("Onrtenuissimus", tmp$Var2), ]
+M5$Var1<-"M5"
+M5$Var2<-"M5"
+tmp<-mito.individuals.phylo.melted[grep("Onivalis", mito.individuals.phylo.melted$Var1), ]
+M6<-tmp[grep("Osp66", tmp$Var2), ]
+M6$Var1<-"M6"
+M6$Var2<-"M6"
+tmp<-mito.individuals.phylo.melted[grep("OspLEES", mito.individuals.phylo.melted$Var1), ]
+M7<-tmp[grep("Ospbahamas1", tmp$Var2), ]
+M7$Var1<-"M7"
+M7$Var2<-"M7"
+tmp<-mito.individuals.phylo.melted[grep("Oullae", mito.individuals.phylo.melted$Var1), ]
+M8<-tmp[grep("Ovacuus", tmp$Var2), ]
+M8$Var1<-"M8"
+M8$Var2<-"M8"
+
+tmp<-mito.individuals.phylo.melted[grep("Oalgarvensis", mito.individuals.phylo.melted$Var1), ]
+MR1<-tmp[grep("Onralgarvensis", tmp$Var2), ]
+MR1$Var2<-"MR1"
+tmp<-mito.individuals.phylo.melted[grep("Ocrassitunicatus", mito.individuals.phylo.melted$Var1), ]
+MR2<-tmp[grep("OspOTHER", tmp$Var2), ]
+MR2$Var2<-"MR2"
+tmp<-mito.individuals.phylo.melted[grep("Imakropetalos", mito.individuals.phylo.melted$Var1), ]
+MR3<-tmp[grep("Imanae", tmp$Var2), ]
+MR3$Var2<-"MR3"
+tmp<-mito.individuals.phylo.melted[grep("IspNYSP", mito.individuals.phylo.melted$Var1), ]
+MR4<-tmp[grep("Imojicae", tmp$Var2), ]
+MR4$Var2<-"MR4"
+tmp<-mito.individuals.phylo.melted[grep("Otenuissimus", mito.individuals.phylo.melted$Var1), ]
+MR5<-tmp[grep("Ofurinus", tmp$Var2), ]
+MR5$Var2<-"MR5"
+tmp<-mito.individuals.phylo.melted[grep("Ireginae", mito.individuals.phylo.melted$Var1), ]
+MR6<-tmp[grep("Itriangulatus", tmp$Var2), ]
+MR6$Var2<-"MR6"
+tmp<-mito.individuals.phylo.melted[grep("Ospokinawa2", mito.individuals.phylo.melted$Var1), ]
+MR7<-tmp[grep("OspTT", tmp$Var2), ]
+MR7$Var2<-"MR7"
+tmp<-mito.individuals.phylo.melted[grep("Oclavatus", mito.individuals.phylo.melted$Var1), ]
+MR8<-tmp[grep("Osp5", tmp$Var2), ]
+MR8$Var2<-"MR8"
+tmp<-mito.individuals.phylo.melted[grep("Otantulus", mito.individuals.phylo.melted$Var1), ]
+MR9<-tmp[grep("Ospbelize1", tmp$Var2), ]
+MR9$Var2<-"MR9"
+tmp<-mito.individuals.phylo.melted[grep("Ospokinawa1", mito.individuals.phylo.melted$Var1), ]
+MR10<-tmp[grep("Ofilithecatus", tmp$Var2), ]
+MR10$Var2<-"MR10"
+tmp<-mito.individuals.phylo.melted[grep("Oprodigus", mito.individuals.phylo.melted$Var1), ]
+MR11<-tmp[grep("Oalbidus", tmp$Var2), ]
+MR11$Var2<-"MR11"
+tmp<-mito.individuals.phylo.melted[grep("Onrloisae", mito.individuals.phylo.melted$Var1), ]
+MR12<-tmp[grep("Onravisceralis", tmp$Var2), ]
+MR12$Var2<-"MR12"
+tmp<-mito.individuals.phylo.melted[grep("Ofaris", mito.individuals.phylo.melted$Var1), ]
+MR13<-tmp[grep("Onrfaris", tmp$Var2), ]
+MR13$Var2<-"MR13"
+REF<-rbind(MR1, MR2, MR3, MR4, MR5, MR6, MR7, MR8, MR9, MR10, MR11, MR12, MR13)
+REF$Var1<-"REF"
+
+mito.phylodist.pairs.final<-rbind(M1, M2, M3, M4, M5,  M6, M7, M8, REF)
+
+mito.phylodist.pairs.final.ref<-mito.phylodist.pairs.final[grep("REF", mito.phylodist.pairs.final$Var1), ]$value
+mito.phylodist.pairs.final.notref<-mito.phylodist.pairs.final[grep("REF", mito.phylodist.pairs.final$Var1, invert=T), ]$value
+mito.wilcoxon<-wilcox.test(mito.phylodist.pairs.final.ref, mito.phylodist.pairs.final.notref, paired=F)
+```
+
+```{r Network of symbiont co-occurences using Spearman's correlations, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+cooccur.symbiont<-as.matrix(data.matrix)
+  
+# correlation analysis based on spearman's co-efficient
+cooccur.symbiont.dist<-rcorr(cooccur.symbiont,type="spearman")
+cooccur.symbiont.cor<-cooccur.symbiont.dist$r
+cooccur.symbiont.cor.p<-cooccur.symbiont.dist$P
+  
+# Multiple testing correction using Benjamini-Hochberg standard false discovery rate correction ("FDR-BH")
+cooccur.symbiont.cor.p <- p.adjust(cooccur.symbiont.cor.p, method="BH")
+  
+# Consider positive cooccurence at given coefficient (cor.cutoff) and p-value cutoffs
+cooccur.symbiont.cor.pos<-cooccur.symbiont.cor
+cooccur.symbiont.cor.pos.p<-cooccur.symbiont.cor.p
+cooccur.symbiont.cor.pos[which(cooccur.symbiont.cor.pos <= 0.6)]=0
+cooccur.symbiont.cor.pos[which(cooccur.symbiont.cor.pos.p>0.01)]=0
+
+# delete those rows and columns with sum = 0
+cooccur.symbiont.cor.pos<-cooccur.symbiont.cor.pos[which(rowSums(cooccur.symbiont.cor.pos)!=1),]
+cooccur.symbiont.cor.pos<-cooccur.symbiont.cor.pos[,which(colSums(cooccur.symbiont.cor.pos)!=0)]
+  
+# Consider both positive and netagive cooccurence at given coefficient (cor.cutoff) and p-value cutoffs
+cooccur.symbiont.cor.both<-cooccur.symbiont.cor
+cooccur.symbiont.cor.both.p<-cooccur.symbiont.cor.p
+cooccur.symbiont.cor.both[which(cooccur.symbiont.cor.both>=(-0.6) & cooccur.symbiont.cor.both <= 0.6)]=0
+cooccur.symbiont.cor.both[which(cooccur.symbiont.cor.both.p>0.01)]=0
+  
+# delete those rows and columns with sum = 0
+cooccur.symbiont.cor.both<-cooccur.symbiont.cor.both[which(rowSums(cooccur.symbiont.cor.both)!=1),]
+cooccur.symbiont.cor.both<-cooccur.symbiont.cor.both[,which(colSums(cooccur.symbiont.cor.both)!=0)]
+  
+# generate graph using igraph
+g.pos.symbiont<-graph.adjacency(cooccur.symbiont.cor.pos,weight=T,mode="undirected")
+g.pos.symbiont<-simplify(g.pos.symbiont)
+V(g.pos.symbiont)$label <- V(g.pos.symbiont)$name
+V(g.pos.symbiont)$degree <- degree(g.pos.symbiont)
+  
+g.both.symbiont<-graph.adjacency(cooccur.symbiont.cor.both,weight=T,mode="undirected")
+g.both.symbiont<-simplify(g.both.symbiont)
+V(g.both.symbiont)$label <- V(g.both.symbiont)$name
+V(g.both.symbiont)$degree <- degree(g.both.symbiont)
+  
+# append the output into results
+result<-list()
+result$cooccur.symbiont.cor<-cooccur.symbiont.cor
+result$cooccur.symbiont.cor.p<-cooccur.symbiont.cor.p
+result$cooccur.symbiont.cor.pos<-cooccur.symbiont.cor.pos
+result$graph.pos.symbiont<-g.pos.symbiont
+result$cooccur.symbiont.cor.both<-cooccur.symbiont.cor.both
+result$graph.both.symbiont<-g.both.symbiont
+
+# plot graph
+ig.cols<-c("#FFFF66", "#FF9900", "#FF3333", "#FF3300", "#FF0066", "#FF0033", "#669999", "#660099", "#CCFFFF", "#006699", "#00FF00", "#99FF99", "#999900", "#FFFF99")
+V(g.both.symbiont)$color<-ig.cols
+plot.igraph(g.both.symbiont)
+# save manually
+```
+
+```{r Plot host and symbiont ages, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+sort.age<-c("host", symbionts)
+age$organism<-reorder.factor(age$organism, new.order=sort.age)
+age %>% arrange(organism)
+
+age.plot<-ggplot(data=age, aes(x=as.factor(fct_rev(organism)), y=median, colour=organism)) +
+    scale_colour_manual(values=symbiont.colors.age) +
+  geom_crossbar(aes(ymin=min, ymax=max, fill=organism), width = 0.5) +
+  scale_fill_manual(values=symbiont.colors.age) +
+  coord_flip() +
+  theme_minimal() +
+  #theme(panel.grid.major=element_line(colour="#CCCCCC")) +
+  #theme(text=element_text(family="Arial")) + 
+  theme(axis.text.x=element_text(angle=-90, hjust=1, size=12)) +
+  theme(axis.text.y=element_text(size=12))  +
+  labs(x="", y="Age (Mya)")
+age.plot
+ggsave(age.plot, file="./plots/ages.eps", height=400, width=400, units="mm")
+
+age.histogram<-ggplot() + 
+  geom_histogram(data=age, aes(x=median), binwidth=50, fill="black") +
+  theme_minimal() +
+  theme(axis.text.x=element_text(size=12)) +
+  theme(axis.text.y=element_text(size=12)) +
+  labs(x="Age (Mya)", y="Frequency of symbiont divergences") 
+age.histogram
+ggsave(age.histogram, file="./plots/age.histogram.eps", height=400, width=400, units="mm")
+
+age.species.plot<-ggplot(data=age) +
+  geom_point(aes(x=median, y=sym_species, colour=organism), size=5) +
+    scale_colour_manual(values=symbiont.colors.age) +
+    theme_minimal() +
+  theme(axis.text.x=element_text(size=12)) +
+  theme(axis.text.y=element_text(size=12)) +
+  theme(legend.position="none") +
+  labs(x="Age (Mya)", y="Number of colonized host species") +
+  geom_rect(aes(xmin=-422.7252, xmax=-97.1542, ymin=0, ymax=55)) +
+  geom_vline(xintercept=-256.131)
+age.species.plot
+ggsave(age.species.plot, file="./plots/age.species.plot.eps", height=200, width=200, units="mm")
+```
+
+```{bash Generate per symbiont nt distance matrixes, include=FALSE}
+for f in $(awk '{print $2}' ./data/abundances.tsv|sort -u|grep -v symbiont); do Rscript --vanilla ./scripts/gen_symbiont_dist_table.R --symbiont $f --output ./data/${f}.nt.dist; done
+
+cat ./data/*nt.dist > ./data/symbiont.nt.dists
+
+sed -i  "" "s/\.[A-Z][a-z0-9]*//g" ./data/symbiont.nt.dists
+```
+
+```{r Plot pairwise UniFrac/phylogenetic distance of host/symbiont pairs, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# UniFrac
+
+unifrac.pairwise.dist<-reshape2::melt(as.matrix(unifrac))
+unifrac.pairwise.dist$Var<-paste(unifrac.pairwise.dist$Var1,"_",unifrac.pairwise.dist$Var2, sep="")
+unifrac.pairwise.dist<-unifrac.pairwise.dist[, c("Var", "value")]
+unifrac.pairwise.dist[3]<-"unifrac"
+names(unifrac.pairwise.dist)<-c("ID", "sym_dist", "symbiont")
+
+# Symbionts 
+
+symbiont.pairwise.dist<-read.csv("./data/symbiont.nt.dists",  sep="\t", header=F)
+symbiont.pairwise.dist$ID<-paste(symbiont.pairwise.dist$V1, "_", symbiont.pairwise.dist$V2, sep="")
+symbiont.pairwise.dist<-symbiont.pairwise.dist[, c("ID", "V3", "V4")]
+names(symbiont.pairwise.dist)<-c("ID", "sym_dist", "symbiont")
+
+# Merge UniFrac and symbiont
+
+unifrac.symbiont.pairwise.dist<-rbind(unifrac.pairwise.dist, symbiont.pairwise.dist)
+
+# Host
+
+host.tree.individuals.renamed<-host.tree.individuals
+host.tree.individuals.renamed$tip.label<-gsub("(.*)_.*", "\\1", host.tree.individuals.renamed$tip.label)
+host.pairwise.dist<-reshape2::melt(cophenetic(host.tree.individuals.renamed))
+host.pairwise.dist$Var<-paste(host.pairwise.dist$Var1,"_",host.pairwise.dist$Var2, sep="")
+host.pairwise.dist<-host.pairwise.dist[, c("Var", "value")]
+names(host.pairwise.dist)<-c("ID", "host_dist")
+
+host.pairwise.all.dist.df<-merge(host.pairwise.dist, unifrac.symbiont.pairwise.dist, by="ID")
+
+# Mitochondria
+
+mito.tree.individuals.renamed<-mito.tree.individuals
+mito.tree.individuals.renamed$tip.label<-gsub("(.*)_.*", "\\1", mito.tree.individuals.renamed$tip.label)
+mito.pairwise.dist<-reshape2::melt(cophenetic(mito.tree.individuals.renamed))
+mito.pairwise.dist$Var<-paste(mito.pairwise.dist$Var1,"_",mito.pairwise.dist$Var2, sep="")
+mito.pairwise.dist<-mito.pairwise.dist[, c("Var", "value")]
+names(mito.pairwise.dist)<-c("ID", "mito_dist")
+
+mito.pairwise.all.dist.df<-merge(mito.pairwise.dist, unifrac.symbiont.pairwise.dist, by="ID")
+
+# Select most abundant symbiont clades
+
+selection<-c("unifrac","Gamma1", "Alpha10", "Alpha3", "Alpha12", "Spiro1" ,"Delta1", "Delta4", "Delta3", "Gamma3", "Alpha5",  "Alpha7")
+
+host.pairwise.dist.unifrac<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='unifrac'),]
+host.pairwise.dist.Gamma1<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Gamma1'),]
+host.pairwise.dist.Alpha10<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Alpha10'),]
+host.pairwise.dist.Alpha3<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Alpha3'),]
+host.pairwise.dist.Alpha12<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Alpha12'),]
+host.pairwise.dist.Spiro1<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Spiro1'),]
+host.pairwise.dist.Delta1<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Delta1'),]
+host.pairwise.dist.Delta4<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Delta4'),]
+host.pairwise.dist.Delta3<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Delta3'),]
+host.pairwise.dist.Gamma3<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Gamma3'),]
+host.pairwise.dist.Alpha5<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Alpha5'),]
+host.pairwise.dist.Alpha7<-host.pairwise.all.dist.df[which(host.pairwise.all.dist.df$symbiont=='Alpha7'),]
+
+host.pairwise.selection.dist.df<-rbind(host.pairwise.dist.unifrac, host.pairwise.dist.Gamma1, host.pairwise.dist.Alpha10, host.pairwise.dist.Alpha3, host.pairwise.dist.Alpha12, host.pairwise.dist.Spiro1, host.pairwise.dist.Delta1, host.pairwise.dist.Delta4, host.pairwise.dist.Delta3, host.pairwise.dist.Gamma3, host.pairwise.dist.Alpha5, host.pairwise.dist.Alpha7)
+
+host.pairwise.selection.dist.df<-arrange(transform(host.pairwise.selection.dist.df, symbiont=factor(symbiont, levels=selection)), symbiont)
+
+mito.pairwise.dist.unifrac<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='unifrac'),]
+mito.pairwise.dist.Gamma1<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Gamma1'),]
+mito.pairwise.dist.Alpha10<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Alpha10'),]
+mito.pairwise.dist.Alpha3<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Alpha3'),]
+mito.pairwise.dist.Alpha12<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Alpha12'),]
+mito.pairwise.dist.Spiro1<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Spiro1'),]
+mito.pairwise.dist.Delta1<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Delta1'),]
+mito.pairwise.dist.Delta4<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Delta4'),]
+mito.pairwise.dist.Delta3<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Delta3'),]
+mito.pairwise.dist.Gamma3<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Gamma3'),]
+mito.pairwise.dist.Alpha5<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Alpha5'),]
+mito.pairwise.dist.Alpha7<-mito.pairwise.all.dist.df[which(mito.pairwise.all.dist.df$symbiont=='Alpha7'),]
+
+mito.pairwise.selection.dist.df<-rbind(mito.pairwise.dist.unifrac, mito.pairwise.dist.Gamma1, mito.pairwise.dist.Alpha10, mito.pairwise.dist.Alpha3, mito.pairwise.dist.Alpha12, mito.pairwise.dist.Spiro1, mito.pairwise.dist.Delta1, mito.pairwise.dist.Delta4, mito.pairwise.dist.Delta3, mito.pairwise.dist.Gamma3, mito.pairwise.dist.Alpha5, mito.pairwise.dist.Alpha7)
+
+mito.pairwise.selection.dist.df<-arrange(transform(mito.pairwise.selection.dist.df, symbiont=factor(symbiont, levels=selection)), symbiont)
+
+# Plots
+
+my.lm<-y~x
+
+host.pairwise.dist.selection.plot<-ggplot(data=host.pairwise.selection.dist.df, aes(x=host_dist, y=sym_dist)) +
+  geom_point(aes(color=symbiont), size=1) +
+  geom_density_2d(color="black", size=0.1) +
+  geom_smooth(method='lm', formula=my.lm, color="black", linetype="dotted", size=0.5) +
+  stat_poly_eq(formula=my.lm, 
+               aes(label=..rr.label..), 
+               parse=TRUE) +    
+  facet_wrap(~ symbiont, scales="free_y") +
+  scale_colour_manual(values=c(symbiont.colors, "unifrac"="gainsboro")) +
+  theme_minimal() +
+  theme(text=element_text(size=5)) +
+  theme(legend.position="none")
+
+mito.pairwise.dist.selection.plot<-ggplot(data=mito.pairwise.selection.dist.df, aes(x=mito_dist, y=sym_dist)) +
+  geom_point(aes(color=symbiont), size=1) +
+  geom_density_2d(color="black", size=0.1) +
+  geom_smooth(method='lm', formula=my.lm, color="black", linetype="dotted", size=0.5) +
+  stat_poly_eq(formula=my.lm, 
+               aes(label=..rr.label..), 
+               parse=TRUE) +      
+  facet_wrap(~ symbiont, scales="free_y") +
+  scale_colour_manual(values=c(symbiont.colors, "unifrac"="gainsboro")) +
+  theme_minimal() +
+  theme(text=element_text(size=5)) +
+  theme(legend.position="none")
+
+host.mito.pairwise.dist.selection.plot<-( host.pairwise.dist.selection.plot / mito.pairwise.dist.selection.plot )
+
+host.mito.pairwise.dist.selection.plot
+
+ggsave(host.mito.pairwise.dist.selection.plot, file="./plots/host.mito.pairwise.dist.selection.plot.eps", height=185, width=180, units="mm")
+```
+
+```{r Export host and nucleotide pairwsie distances to calculate Mantel correlation coefficients, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+host.tree.individuals.renamed<-host.tree.individuals
+host.tree.individuals.renamed$tip.label<-gsub("(.*)_.*", "\\1", host.tree.individuals.renamed$tip.label)
+host.pairwise.dist<-reshape2::melt(cophenetic(host.tree.individuals.renamed))
+host.pairwise.dist$Var<-paste(host.pairwise.dist$Var1,"_",host.pairwise.dist$Var2, sep="")
+names(host.pairwise.dist)<-c("V1", "V2", "host_dist", "ID")
+host.pairwise.all.dist<-merge(host.pairwise.dist, unifrac.symbiont.pairwise.dist, by="ID")
+write.table(host.pairwise.all.dist, file="./analyses/phylogenetic_correlation/host/host.pairwise.all.dist", quote=F, sep=",", row.names=F)
+
+mito.tree.individuals.renamed<-mito.tree.individuals
+mito.tree.individuals.renamed$tip.label<-gsub("(.*)_.*", "\\1", mito.tree.individuals.renamed$tip.label)
+mito.pairwise.dist<-reshape2::melt(cophenetic(mito.tree.individuals.renamed))
+mito.pairwise.dist$Var<-paste(mito.pairwise.dist$Var1,"_",mito.pairwise.dist$Var2, sep="")
+names(mito.pairwise.dist)<-c("V1", "V2", "host_dist", "ID")
+mito.pairwise.all.dist<-merge(mito.pairwise.dist, unifrac.symbiont.pairwise.dist, by="ID")
+write.table(mito.pairwise.all.dist, file="./analyses/phylogenetic_correlation/mito/mito.pairwise.all.dist", quote=F, sep=",", row.names=F)
+```
+
+```{bash Calculate Mantel correlation coefficient for host and symbiont pairwise nucleotide distanes, include=FALSE}
+./scripts/mantel_host-vs-symbiont.sh
+./scripts/mantel_mito-vs-symbiont.sh
+./scripts/mantel_single-locations.sh
+```
+
+```{r Plot Mantel correlation coeffiecents of pairwise genetic distance of host and symbionts, echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+stat_box_data <- function(y, upper_limit=1.15) {
+  return(data.frame(y=0.95*upper_limit, label=length(y)))
+}
+
+host.symbiont<-c("Ileukodermatus_Gamma1", "Ileukodermatus_Alpha3", "Ileukodermatus_Alpha10",   "Oalgarvensis_Gamma1", "Oalgarvensis_Gamma3", "Oalgarvensis_Delta1", "Oalgarvensis_Delta4", "Oalgarvensis_Spiro1", "Oilvae_Gamma1", "Oilvae_Gamma3", "Oilvae_Delta3", "Oilvae_Delta1")
+
+mantel.host<-read.csv("./analyses/phylogenetic_correlation/host/mantel_combined", sep="\t", header=T)
+mantel.host.individuals<-mantel.host[ which(mantel.host$host != "overall"), ]
+mantel.host.individuals<-mantel.host.individuals[complete.cases(mantel.host.individuals),]
+mantel.host.individuals$symbiont<-reorder.factor(mantel.host.individuals$symbiont, new.order=symbionts)
+mantel.host.individuals %>% arrange(symbiont)
+
+mantel.host.sl<-read.csv("./analyses/phylogenetic_correlation/host/single_locations/mantel_combined", sep="\t", header=T)
+mantel.host.sl<-mantel.host.sl[complete.cases(mantel.host.sl),]
+mantel.host.sl$host_symbiont<-paste(mantel.host.sl$host, mantel.host.sl$symbiont, sep="_")
+mantel.host.sl$host_symbiont<-reorder.factor(mantel.host.sl$host_symbiont, new.order=host.symbiont)
+mantel.host.sl%>% arrange(host_symbiont)
+
+mantel.host.plot<-ggplot(mantel.host.individuals, aes(x=fct_rev(symbiont), y=mantel)) +
+  geom_boxplot(fill="gainsboro") +
+  stat_summary(fun.data=stat_box_data, geom="text", hjust=0.5, vjust=0.9, size=3) + 
+  theme_minimal() +  
+  theme(axis.text.x=element_text(angle=-270, hjust=1)) +
+  theme(text=element_text(size=5))
+
+mantel.host.sl.plot<-ggplot(data=mantel.host.sl) +
+  geom_point(aes(x=host_symbiont, y=mantel, colour=symbiont), size=2) +
+  facet_wrap(~ host, scales="free_x") +
+  scale_colour_manual(values=symbiont.colors) +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, hjust=1)) +
+  theme(text=element_text(size=5)) +
+  theme(legend.position="none")
+
+mantel.mito<-read.csv("./analyses/phylogenetic_correlation/mito/mantel_combined", sep="\t", header=T)
+mantel.mito.individuals<-mantel.mito[ which(mantel.mito$host != "overall"), ]
+mantel.mito.individuals<-mantel.mito.individuals[complete.cases(mantel.mito.individuals),]
+mantel.mito.individuals$symbiont<-reorder.factor(mantel.mito.individuals$symbiont, new.order=symbionts)
+mantel.mito.individuals %>% arrange(symbiont)
+
+mantel.mito.sl<-read.csv("./analyses/phylogenetic_correlation/mito/single_locations/mantel_combined", sep="\t", header=T)
+mantel.mito.sl<-mantel.mito.sl[complete.cases(mantel.mito.sl),]
+mantel.mito.sl$host_symbiont<-paste(mantel.mito.sl$host, mantel.mito.sl$symbiont, sep="_")
+mantel.mito.sl$host_symbiont<-reorder.factor(mantel.mito.sl$host_symbiont, new.order=host.symbiont)
+mantel.mito.sl%>% arrange(host_symbiont)
+
+mantel.mito.plot<-ggplot(mantel.mito.individuals, aes(x=fct_rev(symbiont), y=mantel)) +
+    geom_boxplot(fill="gainsboro") +
+    stat_summary(fun.data=stat_box_data, geom="text", hjust=0.5, vjust=0.9, size=3) + 
+    theme_minimal() +  
+    theme(axis.text.x=element_text(angle=-270, hjust=1)) +
+    theme(text=element_text(size=5))
+
+mantel.mito.sl.plot<-ggplot(data=mantel.mito.sl) +
+  geom_point(aes(x=host_symbiont, y=mantel, colour=symbiont), size=2) +
+  facet_wrap(~ host, scales="free_x") +
+  scale_colour_manual(values=symbiont.colors) +
+  theme_minimal() +
+  theme(axis.text.x=element_text(angle=90, hjust=1)) +
+  theme(text=element_text(size=5)) +
+  theme(legend.position="none")
+
+mantel.all.combined<-((mantel.host.plot | mantel.mito.plot) / (mantel.host.sl.plot | mantel.mito.sl.plot))
+
+mantel.all.combined
+
+ggsave(mantel.all.combined, file="./plots/mantel.all.combined.eps", height=210, width=180, units="mm")
+```
